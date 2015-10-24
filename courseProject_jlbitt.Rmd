@@ -1,0 +1,113 @@
+---
+title: "Practical Machine Learning - Course Project Report"
+output: html_document
+---
+
+#Introduction
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+The goal of the project is to predict the manner in which they did the exercise.
+
+#Training data
+
+```{r, warning=FALSE, message=FALSE, results='hide'}
+library(caret)
+set.seed(12345)
+
+trainingAll <- read.csv("pml-training.csv", 
+                        na.strings=c('#DIV/0!', '', 'NA'),
+                        stringsAsFactors = F)
+```
+
+
+#Study design
+
+The first action taken for preparing the training set was to separate 30% of the samples for a testing set. This is helpful to estimate estimate the out of sample error and avoid overfitting.
+
+```{r}
+# Test subset for out of sample error computation
+testPart <- createDataPartition(y = trainingAll$classe, p = 0.3, list = F)
+testOOS <- trainingAll[testPart, ]
+# The remaining part will be used as training subset
+training <- trainingAll[-testPart, ]
+```
+
+##Feature selection
+Observing the available data some points were considered for cleaning and feature selection:
+
+* First 7 columns were removed because they were related to user name and time stamps (no relevant information); 
+* The training set has only rows with no statistical features (i.e. new_window=no). Therefore, all statistical features containing a number of infinite (i.e. zero division) and invalid values were removed.
+
+```{r, warning=FALSE}
+# Remove first 7 columns
+selColumns <- colnames(training)[8:160]
+# Remove all "kurtosis" columns
+selColumns <- selColumns[-grep("kurtosis",selColumns)]
+# Remove all "skewness" columns
+selColumns <- selColumns[-grep("skewness",selColumns)]
+# Remove all "amplitude" columns
+selColumns <- selColumns[-grep("amplitude",selColumns)]
+# Remove all "max" columns
+selColumns <- selColumns[-grep("max_",selColumns)]
+# Remove all "min" columns
+selColumns <- selColumns[-grep("min_",selColumns)]
+# Remove all "var" columns
+selColumns <- selColumns[-grep("var_",selColumns)]
+# Remove all "stddev" columns
+selColumns <- selColumns[-grep("stddev_",selColumns)]
+# Remove all "avg" columns
+selColumns <- selColumns[-grep("avg_",selColumns)]
+# Select training data
+training <- subset(training, select=selColumns)
+```
+
+
+Additionaly, features were selected by removing highly correlated columns (cutoff correlation was 0.75).
+```{r, warning=FALSE}
+correlationMatrix <- cor(training[,1:length(training)-1])
+highlyCorrelated <- findCorrelation(correlationMatrix, cutoff=0.75)
+training <- subset(training, select=c(highlyCorrelated, length(training)))
+training$classe <- factor(training$classe)
+```
+
+
+#Model
+Due to the high number of features available, the random forest method was considered. Besides its particularly ability to handle a large number of inputs, random forests present high accuracy. Nevertheless, a typical drawback of this method is a tendency for overfitting.
+
+##Cross validation
+A 10-fold cross validation was selected for reducing the overfitting probability of the random forest.
+```{r, cache=TRUE, warning=FALSE}
+# Train
+fitControl <- trainControl(## 10-fold CV
+                           method = "cv",
+                           number = 10)
+
+modelFit <- train(classe ~ ., 
+                  data=training, 
+                  method="rf", 
+                  #prox=TRUE,
+                  trControl=fitControl)
+modelFit
+```
+
+The fitted model  presented a very high accuracy, as expected.
+
+```{r}
+confusionMatrix(modelFit)
+```
+
+#Out of sample error
+The out of sample error was estimated by predicting the classes of the testing subset. 
+```{r, warning=FALSE}
+# Calculate the error rate using the test subset
+testColumns <- colnames(training)
+testColumns <- testColumns[-grep("classe",testColumns)]
+testOOSpred <- subset(testOOS, select=testColumns)
+prediction <- predict(modelFit, testOOSpred)
+missClass = function(values, prediction) {
+    sum(prediction != values)/length(values)
+}
+missClass(testOOS$classe, prediction)
+```
+The expected out of sample error is 1.8%.
+
